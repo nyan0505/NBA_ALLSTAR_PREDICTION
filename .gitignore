@@ -1,0 +1,22 @@
+# NBA All-Star Prediction
+# ========================
+# Files generated during runs – do not commit
+data/cache/
+data/*.parquet
+data/*.csv
+data/*.png
+models/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+env/
+.env
+
+# Jupyter
+.ipynb_checkpoints/
+
+# OS
+.DS_Store
