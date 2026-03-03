@@ -6,11 +6,11 @@ do not hit the NBA API unnecessarily.
 """
 
 from __future__ import annotations
-
+from pathlib import Path
 import time
 import warnings
-from pathlib import Path
-
+from nba_api.stats.static import players
+from unidecode import unidecode
 import pandas as pd
 from nba_api.stats.endpoints import leaguegamelog
 from nba_api.stats.static import players as nba_players_static
@@ -103,27 +103,36 @@ def fetch_season_gamelogs(
                     f"Failed to fetch game logs for season {season} after {retries} attempts."
                 ) from exc
 
-    # Should never reach here
     raise RuntimeError(f"Unexpected error fetching season {season}")
 
 
 # ---------------------------------------------------------------------------
-# All-Star label loading and player-ID mapping
+# Player name fetching
 # ---------------------------------------------------------------------------
 
-def _build_name_to_id_map() -> dict[str, int]:
-    """Build a normalised-name → PLAYER_ID mapping from the nba_api static list."""
-    name_map: dict[str, int] = {}
-    for p in nba_players_static.get_players():
-        key = _normalize_name(p["first_name"], p["last_name"])
-        name_map[key] = p["id"]
-    return name_map
+def fetch_player_name(player_id, retries=5, initial_sleep_time=1):
+    sleep_time = initial_sleep_time
+    for attempt in range(retries):
+        try:
+            player_info = players.find_player_by_id(int(player_id))
+            if player_info:
+                return {
+                    "first_name": unidecode(player_info.get("first_name", "")).strip(),
+                    "last_name": unidecode(player_info.get("last_name", "")).strip(),
+                }
+            return None
+        except Exception as e:
+            print(f"Error fetching player_id {player_id}: {e}")
+            if attempt < retries - 1:
+                time.sleep(sleep_time)
+                sleep_time += 1
+            else:
+                print(f"Failed to fetch player_id {player_id} after {retries} attempts.")
+    return None
 
-
-def _normalize_name(first: str, last: str) -> str:
-    """Return a lowercase ASCII key for fuzzy name matching."""
-    return unidecode(f"{first.strip().lower()} {last.strip().lower()}")
-
+# ---------------------------------------------------------------------------
+# All-Star label loading and player-ID mapping
+# ---------------------------------------------------------------------------
 
 def load_allstar_labels(
     allstar_csv: Path | str,
@@ -164,6 +173,19 @@ def load_allstar_labels(
         player_ids.append(name_map.get(key))
 
     df["PLAYER_ID"] = player_ids
-    # year column → int
     df["year"] = df["year"].astype(int)
     return df
+
+
+def _build_name_to_id_map() -> dict[str, int]:
+    """Build a normalised-name → PLAYER_ID mapping from the nba_api static list."""
+    name_map: dict[str, int] = {}
+    for p in nba_players_static.get_players():
+        key = _normalize_name(p["first_name"], p["last_name"])
+        name_map[key] = p["id"]
+    return name_map
+
+
+def _normalize_name(first: str, last: str) -> str:
+    """Return a lowercase ASCII key for fuzzy name matching."""
+    return unidecode(f"{first.strip().lower()} {last.strip().lower()}")

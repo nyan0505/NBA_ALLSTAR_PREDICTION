@@ -59,8 +59,9 @@ def _season_to_start_year(season: str) -> int:
 def build_features_for_season(
     season: str,
     cache_dir: Path | str = "data/cache",
+    end_date: str | pd.Timestamp | None = None,
 ) -> pd.DataFrame:
-    """Return per-player feature rows for *season* using the Oct-1 → Feb-1 window.
+    """Return per-player feature rows for *season* using the Oct-1 → cutoff window.
 
     Parameters
     ----------
@@ -68,29 +69,33 @@ def build_features_for_season(
         NBA season string, e.g. ``'2019-20'``.
     cache_dir : Path | str
         Directory used for game-log cache files.
+    end_date : str | pd.Timestamp | None
+        Inclusive cutoff date. If None, defaults to Feb-1 of cutoff year.
 
     Returns
     -------
     pd.DataFrame
-        One row per player.  Columns include PLAYER_ID, PLAYER_NAME, team,
-        year (int, = start year of season), PLAYER_AGE (NaN – not available
-        from game logs), GP, and all aggregated stat columns.
+        One row per player. Columns include PLAYER_ID, PLAYER_NAME, team,
+        year, PLAYER_AGE, GP, and aggregated stat columns.
     """
     start_year = _season_to_start_year(season)
     cutoff_year = _season_to_cutoff_year(season)
 
-    cutoff_date = pd.Timestamp(f"{cutoff_year}-02-01")
     start_date = pd.Timestamp(f"{start_year}-10-01")
+    cutoff_date = pd.Timestamp(end_date) if end_date is not None else pd.Timestamp(f"{cutoff_year}-02-01")
 
     gl = fetch_season_gamelogs(season, cache_dir=cache_dir)
 
-    # Add GP counter (each row = 1 game)
     gl = gl.copy()
+    gl["GAME_DATE"] = pd.to_datetime(gl["GAME_DATE"], errors="coerce")
+    gl = gl.dropna(subset=["GAME_DATE"])
+
+    # Add GP counter (each row = 1 game)
     gl["GP"] = 1
 
-    # Filter to Oct-1 → Feb-1 window
+    # Filter to Oct-1 → cutoff_date window
     mask = (gl["GAME_DATE"] >= start_date) & (gl["GAME_DATE"] <= cutoff_date)
-    gl = gl[mask]
+    gl = gl.loc[mask]
 
     if gl.empty:
         return pd.DataFrame()
@@ -98,7 +103,7 @@ def build_features_for_season(
     # Aggregate
     agg_dict: dict[str, str | list] = {col: "sum" for col in _AGG_SUM}
     agg_dict["PLAYER_NAME"] = "first"
-    agg_dict["TEAM_ABBREVIATION"] = "last"  # most recent team
+    agg_dict["TEAM_ABBREVIATION"] = "last"
 
     grouped = gl.groupby("PLAYER_ID").agg(agg_dict).reset_index()
 
@@ -107,17 +112,13 @@ def build_features_for_season(
         denom = grouped[denom_col].replace(0, np.nan)
         grouped[pct_col] = grouped[num_col] / denom
 
-    # Normalise team abbreviation
     grouped.rename(columns={"TEAM_ABBREVIATION": "team"}, inplace=True)
     grouped["team"] = grouped["team"].replace(TEAM_ABBR_MAP)
 
-    # Add season metadata
     grouped["year"] = start_year
-    # PLAYER_AGE is not available from game logs; fill with NaN for imputer
     grouped["PLAYER_AGE"] = np.nan
 
     return grouped
-
 
 # ---------------------------------------------------------------------------
 # Historical dataset construction
